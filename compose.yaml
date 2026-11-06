@@ -1,0 +1,12 @@
+services:
+  life-os:
+    build: .
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - life-data:/app/data
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai
+volumes:
+  life-data:

@@ -1,0 +1,12 @@
+{
+  "name": "Personal Life OS",
+  "short_name": "Life OS",
+  "description": "生活的每一面，都值得被记录",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f5f5f0",
+  "theme_color": "#264f40",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

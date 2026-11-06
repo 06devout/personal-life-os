@@ -1,0 +1,9 @@
+.day-holidays{display:flex;flex-wrap:wrap;align-items:center;gap:3px;max-width:100%}
+.day-holidays:empty{display:none}
+.holiday-label{display:inline-block;max-width:100%;padding:1px 5px;border-radius:4px;font-size:9px;font-weight:550;line-height:1.65;color:var(--amber);background:var(--panel);background:color-mix(in srgb,var(--amber) 11%,var(--panel));overflow-wrap:anywhere;text-align:left}
+.holiday-notice{border-top:1px solid var(--border);padding:12px 20px 0;color:var(--muted);font-size:10px;line-height:1.8}
+.day-column-header{min-height:104px}
+.day-column-header .day-holidays{justify-content:center;margin-top:5px}
+.dialog-heading .day-holidays{margin-top:8px}
+@media(max-width:700px){.calendar-day .holiday-label{font-size:8px;padding:1px 2px;line-height:1.5}.calendar-day .day-holidays{gap:2px}.holiday-notice{padding:10px 12px 0;font-size:9px}}
+@media print{.holiday-label{-webkit-print-color-adjust:exact;print-color-adjust:exact}}

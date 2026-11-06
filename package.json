@@ -1,0 +1,13 @@
+{
+  "name": "personal-life-os",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24.0.0" },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test tests/*.test.js",
+    "check": "node --check src/server.js && node --check src/store.js && node --check public/app.js && node --check public/holidays.js"
+  }
+}

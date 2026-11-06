@@ -1,0 +1,7 @@
+data/
+.env
+node_modules/
+test-results/
+*.log
+.DS_Store
+prompt.md
