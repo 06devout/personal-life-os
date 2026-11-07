@@ -1,5 +1,5 @@
 export const localDate = (value = new Date()) => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
-export function calculate(data, year = Number(localDate().slice(0, 4))) {
+export function calculate(data, year = Number(localDate().slice(0, 4)), asOf = localDate()) {
   const events = [];
   const accounts = Object.fromEntries(data.loyalty_accounts.map(account => [account.id, { balance: account.balance || 0, annual: account.annual || 0, lifetime: account.lifetime || 0, spend: account.spend || 0 }]));
   for (const source of ['flights', 'hotel_stays', 'loyalty_transactions']) for (const row of data[source]) {
@@ -28,15 +28,15 @@ export function calculate(data, year = Number(localDate().slice(0, 4))) {
     const history = events.filter(event => event.challenge_id === challenge.id && event.date >= challenge.start_date && (!challenge.end_date || event.date <= challenge.end_date)).sort((first, second) => first.date.localeCompare(second.date) || first.id.localeCompare(second.id));
     let current = Number(challenge.initial || 0);
     const points = history.map(event => ({ ...event, value: current += event.amount }));
-    const elapsed = Math.max(1, Math.floor((Date.parse(`${localDate()}T00:00:00Z`) - Date.parse(`${challenge.start_date}T00:00:00Z`)) / 86400000));
+    const elapsed = Math.max(1, Math.floor((Date.parse(`${asOf}T00:00:00Z`) - Date.parse(`${challenge.start_date}T00:00:00Z`)) / 86400000));
     const rate = (current - Number(challenge.initial || 0)) / elapsed;
     const remaining = Math.max(0, challenge.target - current);
     const days = rate > 0 ? Math.ceil(remaining / rate) : null;
-    const projected = days !== null && days < 365000 ? new Date(Date.parse(`${localDate()}T00:00:00Z`) + days * 86400000).toISOString().slice(0, 10) : null;
-    const status = current >= challenge.target ? '已完成' : ['已暂停', '失败 / 过期'].includes(challenge.status) ? challenge.status : challenge.end_date && challenge.end_date < localDate() ? '失败 / 过期' : challenge.status === '已完成' ? '进行中' : challenge.status;
+    const projected = days !== null && days < 365000 ? new Date(Date.parse(`${asOf}T00:00:00Z`) + days * 86400000).toISOString().slice(0, 10) : null;
+    const status = current >= challenge.target ? '已完成' : ['已暂停', '失败 / 过期'].includes(challenge.status) ? challenge.status : challenge.end_date && challenge.end_date < asOf ? '失败 / 过期' : challenge.status === '已完成' ? '进行中' : challenge.status;
     return [challenge.id, { current, percent: Math.max(0, Math.min(100, current / challenge.target * 100)), remaining, projected, history: points, status }];
   }));
-  const selected = row => (row.date || row.start_date || '').startsWith(String(year));
+  const selected = row => (row.date || row.start_date || String(row.flight_year || '')).startsWith(String(year));
   const activities = data.activities.filter(selected);
   const hours = row => (Number(row.end?.slice(0, 2)) * 60 + Number(row.end?.slice(3)) - Number(row.start?.slice(0, 2)) * 60 - Number(row.start?.slice(3))) / 60;
   const categories = data.categories.map(category => ({ ...category, hours: activities.filter(row => row.category_id === category.id).reduce((total, row) => total + hours(row), 0) }));

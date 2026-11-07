@@ -79,7 +79,20 @@ export const requestHandler = async (request, response) => {
         store.database.prepare('DELETE FROM sessions WHERE token_hash != ?').run(hash(token));
         return json(response, 200, { ok: true });
       }
-      if (url.pathname === '/api/state' && request.method === 'GET') return json(response, 200, { records: store.all(), attachments: store.database.prepare('SELECT id, model, record_id, name, mime, created_at FROM attachments').all() });
+      if (url.pathname === '/api/state' && request.method === 'GET') return json(response, 200, { records: store.all(), attachments: store.database.prepare('SELECT id, model, record_id, name, mime, created_at FROM attachments').all(), archives: store.listArchives(), archiveSuggestion: store.archiveSuggestion(), directory: store.listDirectory() });
+      if (path[1] === 'directory') {
+        if (request.method === 'GET') return json(response, 200, store.listDirectory());
+        if (request.method === 'POST' && !path[2]) return json(response, 201, store.saveReference(await body(request)));
+        if (request.method === 'PUT' && path[2] && path[3]) return json(response, 200, store.saveReference({ ...await body(request), kind: path[2], code: path[3] }, true));
+        if (request.method === 'DELETE' && path[2] && path[3]) { store.removeReference(path[2], path[3]); return json(response, 200, { ok: true }); }
+        throw new AppError('资料库接口不支持该操作', 405);
+      }
+      if (path[1] === 'archives') {
+        if (request.method === 'GET') return json(response, 200, path[2] ? store.getArchive(path[2]) : store.listArchives());
+        if (request.method === 'POST' && !path[2]) return json(response, 201, store.createArchive(await body(request)));
+        if (request.method === 'DELETE' && path[2]) { store.removeArchive(path[2]); return json(response, 200, { ok: true }); }
+        throw new AppError('存档不可编辑；请创建新版本', 405);
+      }
       if (url.pathname === '/api/export' && request.method === 'GET') return json(response, 200, store.exportData(), { 'Content-Disposition': 'attachment; filename="life-os-backup.json"' });
       if (url.pathname === '/api/import' && request.method === 'POST') return json(response, 200, store.importData(await body(request)));
       if (url.pathname === '/api/demo' && request.method === 'POST') { demo(store); return json(response, 200, { ok: true }); }

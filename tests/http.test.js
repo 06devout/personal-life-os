@@ -28,6 +28,8 @@ test('HTTP 请求处理：登录保护、CRUD、附件、备份恢复与退出',
     return { ...response, value: JSON.parse(response.text) };
   };
   assert.equal((await call('state')).status, 401);
+  assert.equal((await call('archives')).status, 401);
+  assert.equal((await call('directory')).status, 401);
   assert.deepEqual((await call('auth')).value, { configured: false, authenticated: false });
   assert.equal((await call('auth', 'POST', { password: 'short' })).status, 400);
   const login = await call('auth', 'POST', { password: 'test-password-12345' });
@@ -35,6 +37,17 @@ test('HTTP 请求处理：登录保护、CRUD、附件、备份恢复与退出',
   assert.match(login.headers.get('set-cookie'), /HttpOnly; SameSite=Strict/);
   cookie = login.headers.get('set-cookie').split(';')[0];
   assert.equal((await call('state')).status, 200);
+  assert.equal((await call('directory', 'POST', { kind: 'airport', code: 'XYZ', name: '测试机场', aliases: ['测试别名'] })).status, 201);
+  assert.equal((await call('state')).value.directory[0].code, 'XYZ');
+  assert.equal((await call('directory/airport/XYZ', 'PUT', { name: '更新机场', aliases: ['新别名'] })).status, 200);
+  assert.equal((await call('directory')).value[0].name, '更新机场');
+  assert.equal((await call('directory/airport/XYZ', 'DELETE')).status, 200);
+  const archive = await call('archives', 'POST', { year: new Date().getFullYear(), notes: '接口存档' });
+  assert.equal(archive.status, 201);
+  assert.equal((await call('archives')).value.length, 1);
+  assert.equal((await call('archives/' + archive.value.id)).value.notes, '接口存档');
+  assert.equal((await call('archives/' + archive.value.id, 'PUT', {})).status, 405);
+  assert.equal((await call('archives/' + archive.value.id, 'DELETE')).status, 200);
   assert.equal((await call('auth', 'POST', { password: 'wrong-password-123' })).status, 401);
   assert.equal((await call('records/todos', 'POST', { name: '恶意跨站', date: '2026-11-06' }, { Origin: 'https://evil.invalid' })).status, 403);
   assert.equal((await dispatch('/api/state', 'GET', null, { Host: 'evil.invalid' })).status, 403);
@@ -58,6 +71,6 @@ test('HTTP 请求处理：登录保护、CRUD、附件、备份恢复与退出',
   assert.equal((await call('state')).status, 401);
   assert.equal((await call('auth', 'POST', { password: 'test-password-12345' })).status, 401);
   assert.equal((await call('auth', 'POST', { password: 'new-password-12345' })).status, 200);
-  for (const path of ['/', '/styles.css', '/app.js', '/metrics.js', '/holidays.js', '/holidays.css', '/manifest.webmanifest', '/sw.js']) assert.equal((await dispatch(path)).status, 200);
+  for (const path of ['/', '/styles.css', '/app.js', '/metrics.js', '/units.js', '/airports.js', '/flight-history.js', '/reference-data.js', '/holidays.js', '/holidays.css', '/manifest.webmanifest', '/sw.js']) assert.equal((await dispatch(path)).status, 200);
   assert.equal((await dispatch('/src/server.js')).status, 404);
 });
