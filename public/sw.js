@@ -1,5 +1,5 @@
-const CACHE = 'life-os-shell-v11';
-const ASSETS = ['/', '/index.html', '/styles.css', '/holidays.css', '/app.js', '/models.js', '/metrics.js', '/holidays.js', '/units.js', '/airports.js', '/flight-history.js', '/reference-data.js', '/icon.svg', '/manifest.webmanifest'];
+const CACHE = 'life-os-shell-v21';
+const ASSETS = ['/', '/index.html', '/styles.css', '/holidays.css', '/app.js', '/models.js', '/metrics.js', '/holidays.js', '/units.js', '/airports.js', '/flight-history.js', '/reference-data.js', '/document-status.js', '/icon.svg', '/manifest.webmanifest'];
 self.addEventListener('install', event => { event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS))); self.skipWaiting(); });
 self.addEventListener('activate', event => { event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(key => key !== CACHE).map(key => caches.delete(key)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', event => {

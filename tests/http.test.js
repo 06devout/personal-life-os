@@ -42,6 +42,14 @@ test('HTTP 请求处理：登录保护、CRUD、附件、备份恢复与退出',
   assert.equal((await call('directory/airport/XYZ', 'PUT', { name: '更新机场', aliases: ['新别名'] })).status, 200);
   assert.equal((await call('directory')).value[0].name, '更新机场');
   assert.equal((await call('directory/airport/XYZ', 'DELETE')).status, 200);
+  const passport = await call('records/documents', 'POST', { name: '接口测试护照', type: '护照', expiry: '2028-01-01' });
+  const visa = await call('records/visas', 'POST', { name: '接口测试签证', passport_id: passport.value.id, country: '示例地区', valid_from: '2025-01-01', expiry: '2030-01-01' });
+  assert.equal(visa.status, 201);
+  assert.equal((await call('state')).value.records.visas[0].passport_id, passport.value.id);
+  assert.equal((await call('records/documents/' + passport.value.id, 'DELETE')).status, 409);
+  assert.equal((await call('records/visas/' + visa.value.id, 'PUT', { ...visa.value, expiry: '2031-01-01' })).status, 200);
+  assert.equal((await call('records/visas/' + visa.value.id, 'DELETE')).status, 200);
+  assert.equal((await call('records/documents/' + passport.value.id, 'DELETE')).status, 200);
   const archive = await call('archives', 'POST', { year: new Date().getFullYear(), notes: '接口存档' });
   assert.equal(archive.status, 201);
   assert.equal((await call('archives')).value.length, 1);
@@ -71,6 +79,6 @@ test('HTTP 请求处理：登录保护、CRUD、附件、备份恢复与退出',
   assert.equal((await call('state')).status, 401);
   assert.equal((await call('auth', 'POST', { password: 'test-password-12345' })).status, 401);
   assert.equal((await call('auth', 'POST', { password: 'new-password-12345' })).status, 200);
-  for (const path of ['/', '/styles.css', '/app.js', '/metrics.js', '/units.js', '/airports.js', '/flight-history.js', '/reference-data.js', '/holidays.js', '/holidays.css', '/manifest.webmanifest', '/sw.js']) assert.equal((await dispatch(path)).status, 200);
+  for (const path of ['/', '/styles.css', '/app.js', '/metrics.js', '/units.js', '/airports.js', '/flight-history.js', '/reference-data.js', '/document-status.js', '/holidays.js', '/holidays.css', '/manifest.webmanifest', '/sw.js']) assert.equal((await dispatch(path)).status, 200);
   assert.equal((await dispatch('/src/server.js')).status, 404);
 });

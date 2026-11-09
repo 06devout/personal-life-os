@@ -16,6 +16,22 @@ function fixture(context) {
 const accountInput = { name: '测试酒店', type: '酒店', number: 'SECRET-123456', balance: 100, annual: 10, lifetime: 50, cycle_start: '2026-01-01', expiry: '2026-12-31', annual_target: 50, lifetime_target: 600 };
 const challengeInput = { name: '测试挑战', type: '年度挑战', start_date: '2026-01-01', end_date: '2026-12-31', target: 50, initial: 0, unit: '晚', status: '进行中' };
 
+test('会员小数房晚及积分在保存、累计、备份恢复和存档中保持精度', context => {
+  const { store } = fixture(context);
+  const account = store.save('loyalty_accounts', { ...accountInput, annual: 20.5, lifetime: 100.5, balance: 500.5 });
+  const stay = store.save('hotel_stays', { name: '小数房晚', date: '2026-01-01', checkout: '2026-01-02', nights: 1.25, points: 100.25, account_id: account.id });
+  assert.equal(store.get('hotel_stays', stay.id).nights, 1.25);
+  assert.equal(store.get('loyalty_accounts', account.id).annual, 20.5);
+  const progress = calculate(store.all()).accounts[account.id];
+  assert.equal(progress.annual, 21.75);
+  assert.equal(progress.lifetime, 101.75);
+  assert.equal(progress.balance, 600.75);
+  store.importData(store.exportData());
+  assert.deepEqual(calculate(store.all()).accounts[account.id], progress);
+  const archive = store.createArchive({ year: Number(localDate().slice(0, 4)) });
+  assert.equal(archive.snapshot.accounts.find(row => row.definition.id === account.id).progress.annual, 21.75);
+});
+
 test('直接入账：多航司酒店独立选计划，修改换计划删除可逆，不叠加规则', context => {
   const { store } = fixture(context);
   const first = store.save('loyalty_accounts', accountInput);

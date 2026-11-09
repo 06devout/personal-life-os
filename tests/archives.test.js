@@ -73,6 +73,35 @@ test('新年提示、版本持久化、原记录删除后存档仍完整', conte
   assert.throws(() => store.getArchive(archive.id), /不存在/);
 });
 
+test('全年存档包含年末计划，排除下一年，未来年度可提前保存', context => {
+  const { store, year, account, challenge } = fixture(context);
+  const stay = store.save('hotel_stays', { name: '年底入住', date: `${year}-12-20`, checkout: `${year}-12-22`, nights: 2.5, points: 500, account_id: account.id });
+  store.save('challenge_progress', { challenge_id: challenge.id, date: `${year}-12-20`, amount: 10 });
+  store.save('hotel_stays', { name: '次年入住', date: `${year + 1}-01-02`, checkout: `${year + 1}-01-04`, nights: 2, points: 1000, account_id: account.id });
+  const today = `${year}-11-08`;
+  const partial = buildYearSnapshot(store.all(), year, today);
+  const full = buildYearSnapshot(store.all(), year, today, 'full_year');
+  assert.equal(partial.accounts[0].progress.balance, 100);
+  assert.equal(full.accounts[0].progress.balance, 600);
+  assert.equal(full.accounts[0].progress.annual, 12.5);
+  assert.equal(full.challenges[0].progress.current, 15);
+  assert.equal(full.plan.hotel_stays.length, 1);
+  assert.equal(full.includes_future, true);
+  const archive = store.createArchive({ year, coverage: 'full_year' });
+  assert.equal(archive.cutoff, `${year}-12-31`);
+  assert.equal(store.listArchives()[0].coverage, 'full_year');
+  store.remove('hotel_stays', stay.id);
+  assert.equal(store.getArchive(archive.id).snapshot.plan.hotel_stays[0].name, '年底入住');
+  const backup = store.exportData();
+  store.importData(backup);
+  assert.deepEqual(store.getArchive(archive.id), archive);
+  const invalid = structuredClone(backup);
+  invalid.archives[0].snapshot.coverage = 'invalid';
+  assert.throws(() => store.importData(invalid), /范围/);
+  assert.equal(store.createArchive({ year: year + 1, coverage: 'full_year' }).cutoff, `${year + 1}-12-31`);
+  assert.throws(() => store.createArchive({ year, coverage: 'invalid' }), /范围/);
+});
+
 test('完整备份恢复存档、旧备份兼容、失败回滚保护已有存档', context => {
   const { store, year } = fixture(context);
   const archive = store.createArchive({ year });

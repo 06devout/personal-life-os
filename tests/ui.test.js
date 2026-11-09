@@ -10,8 +10,89 @@ import { holidaysOn, holidayNotice } from '../public/holidays.js';
 import { milesToKilometers, kilometersToMiles } from '../public/units.js';
 import { buildFlightHistory, findUnknownFlightReferences } from '../public/flight-history.js';
 import { airportCode } from '../public/airports.js';
+import { isPassport, visaDateStatus } from '../public/document-status.js';
 import { openStore } from '../src/store.js';
 import { seed, demo } from '../src/seed.js';
+
+test('日历月周日视图、日期详情及首页活动均按开始时间升序，不改动原数据', () => {
+  const app = { innerHTML: '' };
+  const modal = { innerHTML: '', showModal() { this.open = true; }, addEventListener() {} };
+  const runtime = {
+    models, calculate, localDate, holidaysOn, holidayNotice, milesToKilometers, kilometersToMiles, buildFlightHistory, findUnknownFlightReferences, airportCode, isPassport, visaDateStatus, console, URL, Blob, setTimeout, clearTimeout,
+    localStorage: { getItem: () => null, setItem() {} },
+    document: { querySelector: selector => ({ '#app': app, '#modal': modal })[selector] || null, querySelectorAll: () => [], addEventListener() {}, documentElement: { dataset: {} } },
+    window: { addEventListener() {} }, navigator: {}, location: { hash: '' }
+  };
+  const source = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8').replace(/^import .+;\n/gm, '').replace(/\nboot\(\);\s*$/, '\nglobalThis.ui = { state, render, dayDetail };');
+  runInNewContext(source, runtime);
+  const ui = runtime.ui;
+  ui.state.records = Object.fromEntries(Object.keys(models).map(model => [model, []]));
+  const date = localDate();
+  const events = [
+    { id: 'night', name: '排序测试晚间活动', start: '18:00', end: '19:00' },
+    { id: 'late', name: '排序测试同小时较晚', start: '07:45', end: '08:00' },
+    { id: 'middle', name: '排序测试同小时居中', start: '07:25', end: '07:40' },
+    { id: 'early', name: '排序测试同小时最早', start: '07:05', end: '07:15' }
+  ].map(event => ({ ...event, date }));
+  ui.state.records.activities = events;
+  const original = JSON.stringify(events);
+  ui.state.route = 'calendar'; ui.state.date = date;
+  const ordered = [...events].reverse();
+  for (const mode of ['month', 'week', 'day']) {
+    ui.state.calendarMode = mode; ui.render();
+    const expected = ordered;
+    let previous = -1;
+    for (const event of expected) {
+      const position = app.innerHTML.indexOf(event.name);
+      assert.ok(position > previous, `${mode}: ${event.name} 顺序错误`);
+      previous = position;
+    }
+    if (mode === 'month') assert.ok(app.innerHTML.includes('共 4 项活动'), '月视图展示全部活动并标明总数');
+  }
+  ui.dayDetail(date);
+  assert.ok(modal.innerHTML.indexOf(ordered[0].name) < modal.innerHTML.indexOf(ordered[3].name));
+  ui.state.route = 'overview'; ui.render();
+  assert.ok(app.innerHTML.indexOf(ordered[0].name) < app.innerHTML.indexOf(ordered[3].name));
+  assert.equal(JSON.stringify(events), original);
+  const many = Array.from({ length: 12 }, (_, index) => ({ id: `many-${index}`, date, name: `全天活动${String(index + 1).padStart(2, '0')}`, start: `${String(index).padStart(2, '0')}:00`, end: `${String(index).padStart(2, '0')}:30` }));
+  ui.state.records.activities = [...many].reverse(); ui.state.route = 'calendar'; ui.state.calendarMode = 'month'; ui.render();
+  assert.ok(app.innerHTML.includes('class="calendar-events"'));
+  assert.ok(app.innerHTML.includes('共 12 项活动'));
+  let position = -1;
+  for (const event of many) {
+    const next = app.innerHTML.indexOf(event.name);
+    assert.ok(next > position, `多条活动排序：${event.name}`);
+    position = next;
+  }
+  const shift = days => new Date(Date.parse(date + 'T12:00:00Z') + days * 86400000).toISOString().slice(0, 10);
+  ui.state.records.flights = [
+    { id: 'flight-late', date, airline: 'CA', number: 'TEST202', origin: 'HND', destination: 'PEK', departure_time: '18:00', arrival_time: '01:35', arrival_day_offset: 1 },
+    { id: 'flight-early', date, airline: 'CA', number: 'TEST101', origin: 'PEK', destination: 'HND', departure_time: '08:00' }
+  ];
+  ui.state.records.hotel_stays = [
+    { id: 'stay', date, checkout: shift(2), name: '同日入住测试酒店', nights: 2 },
+    { id: 'stay-other', date, checkout: shift(1), name: '第二家测试酒店', nights: 1 }
+  ];
+  ui.state.records.trips = [{ id: 'trip', name: '同日测试旅行', start_date: date, end_date: shift(3) }];
+  for (const mode of ['month', 'week', 'day']) {
+    ui.state.calendarMode = mode; ui.render();
+    for (const text of ['TEST101', 'TEST202', '同日入住测试酒店', '第二家测试酒店', '同日测试旅行']) assert.ok(app.innerHTML.includes(text), `${mode} 应同时显示 ${text}`);
+    assert.ok(app.innerHTML.indexOf('TEST101') < app.innerHTML.indexOf('TEST202'), `${mode} 航班仍按出发时间排序`);
+    assert.ok(app.innerHTML.includes('TEST202 HND → PEK<br>1800 - 0135(+1)'), `${mode} 应将时间固定展示在航线下一行并保留跨日标记`);
+    assert.ok(app.innerHTML.includes('TEST101 PEK → HND<br>0800 - ----'), `${mode} 未填写的时间不应被假定为零点`);
+  }
+  ui.state.route = 'travel'; ui.state.travelTab = 'flights'; ui.render();
+  assert.ok(app.innerHTML.includes('<th>出发当地时间</th>'));
+  assert.ok(app.innerHTML.includes('<th>到达当地时间</th>'));
+  assert.ok(app.innerHTML.includes('<td>18:00</td>'));
+  assert.ok(app.innerHTML.includes('<td>01:35（+1 天）</td>'));
+  ui.dayDetail(shift(1));
+  assert.ok(modal.innerHTML.includes('住宿 · 同日入住测试酒店'));
+  assert.ok(modal.innerHTML.includes('退房 · 第二家测试酒店'));
+  assert.ok(!modal.innerHTML.includes('TEST101'));
+  ui.dayDetail(shift(2)); assert.ok(modal.innerHTML.includes('退房 · 同日入住测试酒店'));
+  ui.dayDetail(shift(3)); assert.ok(!modal.innerHTML.includes('同日入住测试酒店'));
+});
 
 test('浏览位置：年月共享、未来规划、刷新恢复、视图记忆与无效缓存回退', async () => {
   const storage = new Map();
@@ -21,7 +102,7 @@ test('浏览位置：年月共享、未来规划、刷新恢复、视图记忆�
     const handlers = {};
     const app = { innerHTML: '' };
     const runtime = {
-      models, calculate, localDate, holidaysOn, holidayNotice, milesToKilometers, kilometersToMiles, buildFlightHistory, findUnknownFlightReferences, airportCode, console, URL, Blob, setTimeout, clearTimeout,
+      models, calculate, localDate, holidaysOn, holidayNotice, milesToKilometers, kilometersToMiles, buildFlightHistory, findUnknownFlightReferences, airportCode, isPassport, visaDateStatus, console, URL, Blob, setTimeout, clearTimeout,
       localStorage: { getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value) },
       document: { querySelector: selector => selector === '#app' ? app : selector === '#modal' ? { addEventListener() {} } : elements.get(selector) || null, querySelectorAll: () => [], addEventListener: (name, handler) => handlers[name] = handler, documentElement: { dataset: {} } },
       window: { addEventListener() {} }, navigator: {}, location: { hash: '' }
@@ -75,9 +156,9 @@ test('前端渲染烟测：所有页面、空态、详情、表单、日历模�
   const form = { addEventListener(name, handler) { this[name] = handler; }, querySelector() { return { disabled: false }; } };
   const notification = { classList: { add() {}, remove() {} } };
   const storage = new Map();
-  const source = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8').replace(/^import .+;\n/gm, '').replace(/\nboot\(\);\s*$/, '\nglobalThis.ui = { state, render, detail, editForm, quickAdd, dayDetail, markdown, archiveForm, showArchive, formatValue, referenceForm, referenceManager };');
+  const source = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8').replace(/^import .+;\n/gm, '').replace(/\nboot\(\);\s*$/, '\nglobalThis.ui = { state, render, detail, editForm, quickAdd, dayDetail, markdown, archiveForm, showArchive, formatValue, referenceForm, referenceManager, reminders };');
   const contextObject = {
-    models, calculate, localDate, holidaysOn, holidayNotice, milesToKilometers, kilometersToMiles, buildFlightHistory, findUnknownFlightReferences, airportCode, console, URL, Blob, setTimeout, clearTimeout,
+    models, calculate, localDate, holidaysOn, holidayNotice, milesToKilometers, kilometersToMiles, buildFlightHistory, findUnknownFlightReferences, airportCode, isPassport, visaDateStatus, console, URL, Blob, setTimeout, clearTimeout,
     localStorage: { getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value) },
     document: { querySelector: selector => ({ '#app': app, '#modal': modal, '#record-form': form, '#archive-form': form, '#reference-form': form, '#toast': notification })[selector] || null, querySelectorAll: () => [], addEventListener() {}, documentElement: { dataset: {} } },
     FormData: class extends Map { constructor(target) { super(Object.entries(target.fields)); } },
@@ -166,18 +247,34 @@ test('前端渲染烟测：所有页面、空态、详情、表单、日历模�
   ui.state.route = 'analytics'; ui.state.year = 2013; ui.render();
   assert.ok(!app.innerHTML.includes('NaN'));
   const year = Number(localDate().slice(0, 4));
+  const decimalAccount = store.save('loyalty_accounts', { name: '小数进度测试', type: '酒店', annual: 20.5, lifetime: 100.5, balance: 500.5, annual_target: 50.5, retain_target: 30.5, lifetime_target: 600.5, cycle_start: `${year}-01-01`, expiry: `${year}-12-31` });
+  ui.state.records = store.all(); ui.state.route = 'loyalty'; ui.state.loyaltyTab = 'loyalty_accounts'; ui.render();
+  assert.ok(app.innerHTML.includes('20.5 / 50.5'));
+  assert.ok(app.innerHTML.includes('100.5 / 600.5'));
+  assert.ok(app.innerHTML.includes('>500.5</b>'));
+  ui.state.route = 'analytics'; ui.render();
+  assert.ok(app.innerHTML.includes('年度 20.5 / 50.5'));
+  ui.detail('loyalty_accounts', decimalAccount.id);
+  assert.ok(modal.innerHTML.includes('20.5 / 50.5'));
   const archive = store.createArchive({ year, title: '<年度快照>' });
   ui.state.archives = store.listArchives(); ui.state.route = 'archives'; ui.render();
   assert.ok(app.innerHTML.includes('&lt;年度快照&gt;'));
   await ui.showArchive(archive.id);
+  assert.ok(modal.innerHTML.includes('20.5 / 50.5'));
   assert.ok(modal.innerHTML.includes('只读历史快照'));
+  assert.ok(modal.innerHTML.includes('已存档的年度行程与活动'));
   assert.ok(!modal.innerHTML.includes('data-action="edit"'));
   ui.archiveForm(year, true);
   assert.ok(modal.innerHTML.includes('保存后打开下一年一月日历'));
+  assert.ok(modal.innerHTML.includes('value="full_year" selected'));
+  ui.archiveForm(year + 1);
+  assert.ok(modal.innerHTML.includes(`max="9998" value="${year + 1}"`));
   form.fields = { year: String(year), title: '规划前存档', notes: '测试', plan_next: 'on' };
   contextObject.setTimeout = () => 0;
   await form.submit({ preventDefault() {}, currentTarget: form });
   assert.equal(store.listArchives().length, 2);
+  assert.equal(store.listArchives()[0].coverage, 'full_year');
+  assert.equal(store.listArchives()[0].cutoff, `${year}-12-31`);
   assert.equal(contextObject.location.hash.replace(/^#/, ''), 'calendar');
   assert.equal(ui.state.date, `${year + 1}-01-01`);
   const unknownFlight = store.save('flights', { date: '2025-01-04', airline: 'CA', origin: '测试城机场', destination: 'PEK' });
@@ -192,4 +289,26 @@ test('前端渲染烟测：所有页面、空态、详情、表单、日历模�
   ui.state.route = 'travel'; ui.state.travelTab = 'flight_history'; ui.render();
   assert.ok(app.innerHTML.includes('测试城国际机场'));
   ui.referenceManager(); assert.ok(modal.innerHTML.includes('XYZ · 测试城国际机场'));
+  const passport = store.save('documents', { name: '我的测试护照', type: '护照', expiry: `${year + 5}-01-01` });
+  const insurance = store.save('documents', { name: '测试保险', type: '保险', expiry: `${year + 1}-01-01` });
+  const shift = days => new Date(Date.parse(localDate() + 'T12:00:00Z') + days * 86400000).toISOString().slice(0, 10);
+  const visa = store.save('visas', { name: '短期旅游签证', passport_id: passport.id, country: '示例地区', valid_from: shift(-10), expiry: shift(29), entries: '多次', stay_days: 30 });
+  store.save('visas', { name: '下次旅行签证', passport_id: passport.id, country: '其他地区', valid_from: shift(31), expiry: shift(120) });
+  ui.state.records = store.all(); ui.state.route = 'documents'; ui.state.documentTab = 'documents'; ui.render();
+  assert.ok(app.innerHTML.includes('关联签证 · 2 份'));
+  assert.ok(app.innerHTML.includes('短期旅游签证'));
+  assert.ok(app.innerHTML.includes(visa.expiry));
+  ui.detail('documents', passport.id); assert.ok(modal.innerHTML.includes('下次旅行签证'));
+  ui.state.documentTab = 'visas'; ui.render();
+  assert.ok(app.innerHTML.includes('未生效'));
+  assert.ok(app.innerHTML.includes('30 天内到期'));
+  assert.ok(ui.reminders().some(row => row.model === 'visas' && row.id === visa.id));
+  ui.editForm('visas', visa.id);
+  assert.ok(modal.innerHTML.includes(`value="${passport.id}" selected`));
+  assert.ok(!modal.innerHTML.includes(`value="${insurance.id}"`));
+  delete ui.state.records.visas;
+  ui.editForm('visas');
+  assert.ok(modal.innerHTML.includes('需要重启本地服务'));
+  assert.ok(modal.innerHTML.includes('npm start'));
+  assert.ok(!modal.innerHTML.includes('id="record-form"'));
 });

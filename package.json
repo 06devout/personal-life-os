@@ -1,6 +1,6 @@
 {
   "name": "personal-life-os",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "type": "module",
   "engines": { "node": ">=24.0.0" },
@@ -8,6 +8,6 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "test": "node --test tests/*.test.js",
-    "check": "node --check src/server.js && node --check src/store.js && node --check public/app.js && node --check public/holidays.js && node --check src/archives.js && node --check src/flight-import.js && node --check scripts/import-flight-log.js && node --check public/units.js && node --check public/airports.js && node --check scripts/normalize-flight-airports.js && node --check public/flight-history.js && node --check public/reference-data.js"
+    "check": "node --check src/server.js && node --check src/store.js && node --check public/app.js && node --check public/holidays.js && node --check src/archives.js && node --check src/flight-import.js && node --check scripts/import-flight-log.js && node --check public/units.js && node --check public/airports.js && node --check scripts/normalize-flight-airports.js && node --check public/flight-history.js && node --check public/reference-data.js && node --check public/document-status.js"
   }
 }

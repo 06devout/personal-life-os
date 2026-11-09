@@ -3,10 +3,11 @@ import { randomUUID, randomBytes, createCipheriv, createDecipheriv } from 'node:
 import { mkdirSync, readFileSync, writeFileSync, existsSync, chmodSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { models, referenceFields } from '../public/models.js';
-import { buildYearSnapshot } from './archives.js';
+import { buildYearSnapshot, archiveCutoff } from './archives.js';
 import { normalizeFlightAirports, airportKnown, airportCode } from '../public/airports.js';
 import { airlineIdentity } from '../public/flight-history.js';
 import { referenceKey } from '../public/reference-data.js';
+import { isPassport } from '../public/document-status.js';
 
 export class AppError extends Error {
   constructor(message, status = 400) { super(message); this.status = status; }
@@ -27,6 +28,7 @@ export function openStore(directory) {
   database.exec(readFileSync(new URL('../migrations/002_records.sql', import.meta.url), 'utf8'));
   database.exec(readFileSync(new URL('../migrations/003_year_archives.sql', import.meta.url), 'utf8'));
   database.exec(readFileSync(new URL('../migrations/004_reference_directory.sql', import.meta.url), 'utf8'));
+  database.exec(readFileSync(new URL('../migrations/005_visas.sql', import.meta.url), 'utf8'));
   const encrypt = value => {
     const nonce = randomBytes(12);
     const cipher = createCipheriv('aes-256-gcm', key, nonce);
@@ -101,6 +103,11 @@ export function openStore(directory) {
     if (data.end_date && data.start_date > data.end_date) throw new AppError('结束日期不能早于开始日期');
     if (data.checkout && data.checkout <= data.date) throw new AppError('退房日期必须晚于入住日期');
     if (data.issued && data.issued > data.expiry) throw new AppError('到期日期不能早于签发日期');
+    if (table === 'visas') {
+      if (!isPassport(get('documents', data.passport_id))) throw new AppError('签证必须关联护照类型的证件');
+      if (data.valid_from > data.expiry) throw new AppError('签证到期日期不能早于生效日期');
+      if (data.stay_days !== null && !Number.isInteger(data.stay_days)) throw new AppError('停留天数必须为整数');
+    }
     if (table === 'loyalty_rules') {
       const metrics = { flights: ['miles', 'qualifying', 'spend'], hotel_stays: ['nights', 'points', 'spend'], loyalty_transactions: ['points', 'qualifying', 'spend'] };
       if (!metrics[data.source]?.includes(data.metric)) throw new AppError('该来源不包含所选原始指标');
@@ -112,6 +119,7 @@ export function openStore(directory) {
   const save = (table, input, id = randomUUID(), options = {}) => {
     const data = validate(table, table === 'flights' ? normalizeFlightAirports(input, listDirectory()) : input);
     const previous = database.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id);
+    if (table === 'documents' && !isPassport(data) && database.prepare('SELECT id FROM visas WHERE passport_id = ? LIMIT 1').get(id)) throw new AppError('这份护照仍关联签证，不能改为其他证件类型');
     if (table === 'daily_entries' && list(table).some(row => row.date === data.date && row.id !== id)) throw new AppError('这一天已有日记，请编辑已有记录', 409);
     const ruleSources = ['flights', 'hotel_stays', 'loyalty_transactions'];
     if (ruleSources.includes(table)) {
@@ -163,7 +171,7 @@ export function openStore(directory) {
     if (!row) throw new AppError('存档不存在', 404);
     return { id: row.id, year: row.year, revision: row.revision, title: row.title, cutoff: row.cutoff, created_at: row.created_at, ...JSON.parse(decrypt(row.data)) };
   };
-  const listArchives = () => database.prepare('SELECT id, year, revision, title, cutoff, created_at FROM year_archives ORDER BY year DESC, revision DESC').all();
+  const listArchives = () => database.prepare('SELECT * FROM year_archives ORDER BY year DESC, revision DESC').all().map(({ data, ...row }) => ({ ...row, coverage: JSON.parse(decrypt(data)).snapshot.coverage || 'to_date' }));
   const validateArchive = archive => {
     const validDate = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value + 'T00:00:00Z')) && new Date(value + 'T00:00:00Z').toISOString().slice(0, 10) === value;
     if (!archive || typeof archive.id !== 'string' || !/^[a-zA-Z0-9-]{1,80}$/.test(archive.id) || !Number.isInteger(archive.year) || archive.year < 1000 || archive.year > 9998 || !Number.isInteger(archive.revision) || archive.revision < 1 || typeof archive.title !== 'string' || archive.title.length > 200 || typeof archive.notes !== 'string' || archive.notes.length > 10000 || typeof archive.created_at !== 'string' || !Number.isFinite(Date.parse(archive.created_at)) || !validDate(archive.cutoff) || !archive.cutoff.startsWith(String(archive.year)) || !archive.snapshot || !Array.isArray(archive.snapshot.challenges) || !Array.isArray(archive.snapshot.accounts) || typeof archive.snapshot.basis !== 'string' || !archive.snapshot.summary) throw new AppError('年度存档格式无效');
@@ -173,6 +181,11 @@ export function openStore(directory) {
     }
     for (const item of archive.snapshot.challenges) for (const field of ['current', 'percent', 'remaining']) if (!Number.isFinite(item.progress[field])) throw new AppError('存档挑战数值无效');
     for (const item of archive.snapshot.accounts) for (const field of ['balance', 'annual', 'lifetime', 'spend']) if (!Number.isFinite(item.progress[field])) throw new AppError('存档会籍数值无效');
+    if (archive.snapshot.coverage !== undefined && !['to_date', 'full_year'].includes(archive.snapshot.coverage)) throw new AppError('存档范围无效');
+    if (archive.snapshot.coverage === 'full_year' && archive.cutoff !== `${archive.year}-12-31`) throw new AppError('全年存档必须截止当年 12 月 31 日');
+    if (archive.snapshot.includes_future !== undefined && typeof archive.snapshot.includes_future !== 'boolean') throw new AppError('计划存档标记无效');
+    if (archive.snapshot.captured_on !== undefined && !validDate(archive.snapshot.captured_on)) throw new AppError('存档生成日期无效');
+    if (archive.snapshot.plan !== undefined && (!archive.snapshot.plan || ['flights', 'hotel_stays', 'activities', 'trips'].some(model => !Array.isArray(archive.snapshot.plan[model]) || archive.snapshot.plan[model].some(row => !row || typeof row !== 'object' || Array.isArray(row))))) throw new AppError('存档年度计划格式无效');
   };
   const insertArchive = archive => {
     validateArchive(archive);
@@ -181,14 +194,17 @@ export function openStore(directory) {
   const createArchive = input => {
     const year = Number(input.year);
     const today = localDate();
-    if (!Number.isInteger(year) || year < 1000 || year > Number(today.slice(0, 4))) throw new AppError('请选择当前年或过去的年份，未来年度尚不能结算存档');
+    const coverage = input.coverage ?? 'to_date';
+    if (!['to_date', 'full_year'].includes(coverage)) throw new AppError('请选择有效的存档范围');
+    if (!Number.isInteger(year) || year < 1000 || year > 9998) throw new AppError('请选择 1000–9998 之间的年份');
+    if (coverage === 'to_date' && year > Number(today.slice(0, 4))) throw new AppError('未来年度请使用全年计划存档，不能使用截至今天的口径');
     if (input.title !== undefined && (typeof input.title !== 'string' || input.title.length > 200)) throw new AppError('存档名称最多 200 字');
     if (input.notes !== undefined && (typeof input.notes !== 'string' || input.notes.length > 10000)) throw new AppError('存档备注最多 10000 字');
     database.exec('BEGIN IMMEDIATE');
     try {
       const revision = database.prepare('SELECT COALESCE(MAX(revision), 0) + 1 AS next FROM year_archives WHERE year = ?').get(year).next;
-      const snapshot = buildYearSnapshot(all(), year, today);
-      const archive = { id: randomUUID(), year, revision, title: input.title?.trim() || `${year} 年生活进度存档`, cutoff: `${year}-12-31` < today ? `${year}-12-31` : today, created_at: new Date().toISOString(), notes: input.notes || '', snapshot };
+      const snapshot = buildYearSnapshot(all(), year, today, coverage);
+      const archive = { id: randomUUID(), year, revision, title: input.title?.trim() || `${year} 年${coverage === 'full_year' ? '全年计划' : '生活进度'}存档`, cutoff: archiveCutoff(year, today, coverage), created_at: new Date().toISOString(), notes: input.notes || '', snapshot };
       insertArchive(archive);
       database.exec('COMMIT');
       return archive;
@@ -205,6 +221,8 @@ export function openStore(directory) {
   const exportData = () => ({ format: 'personal-life-os', version: 1, exported_at: new Date().toISOString(), records: all(), directory: listDirectory(), archives: listArchives().map(row => getArchive(row.id)), attachments: database.prepare('SELECT * FROM attachments').all().map(row => ({ ...row, content: decrypt(row.content) })) });
   const importData = payload => {
     if (payload?.format !== 'personal-life-os' || payload.version !== 1 || !payload.records || !Array.isArray(payload.attachments)) throw new AppError('备份格式或版本不受支持');
+    payload = { ...payload, records: { ...payload.records } };
+    if (!Object.hasOwn(payload.records, 'visas')) payload.records.visas = [];
     const tables = Object.keys(models);
     if (Object.keys(payload.records).length !== tables.length || tables.some(table => !Array.isArray(payload.records[table]))) throw new AppError('备份数据表不完整');
     const ids = new Set();
